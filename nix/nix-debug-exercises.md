@@ -1,14 +1,14 @@
-# Nix — Environnements à debugger
+# Nix — Environments to debug
 
-Chaque scénario est un fichier **fonctionnel en apparence** mais qui contient des bugs à trouver.
-Certains feront planter l'évaluation (`nix eval` / `nixos-rebuild build`), d'autres passeront mais produiront un résultat incorrect, cassé au runtime, ou non sécurisé.
+Each scenario is a file that **looks functional** but contains bugs to find.
+Some will break evaluation (`nix eval` / `nixos-rebuild build`), others will pass but produce an incorrect result, broken at runtime, or insecure.
 
 ---
 
-## Scénario 1 — Configuration NixOS d'un serveur bastion
+## Scenario 1 — NixOS configuration of a bastion server
 
-L'équipe a écrit cette configuration pour un petit serveur bastion exposant une app interne.
-L'évaluation ne passe pas telle quelle. Trouve et corrige tous les bugs.
+The team wrote this configuration for a small bastion server exposing an internal app.
+Evaluation doesn't pass as-is. Find and fix all the bugs.
 
 ### `configuration.nix`
 
@@ -63,9 +63,9 @@ in
 
 ---
 
-## Scénario 2 — Flake pour build et devShell d'une app
+## Scenario 2 — Flake for an app's build and devShell
 
-L'équipe packagée une petite app avec un flake. `nix build .#myapp` fonctionne, mais plusieurs choses ne se comportent pas comme prévu — et il y a un problème de sécurité non détecté.
+The team packaged a small app with a flake. `nix build .#myapp` works, but several things don't behave as expected — and there is an undetected security issue.
 
 ### `flake.nix`
 
@@ -117,4 +117,4 @@ L'équipe packagée une petite app avec un flake. `nix build .#myapp` fonctionne
 }
 ```
 
-**Indice :** teste mentalement (ou réellement) `nix build` sans argument, `nix flake check`, et demande-toi ce qui se passe si `myapp` est utilisé comme dépendance d'un autre package cross-compilé.
+**Hint:** mentally (or actually) try `nix build` with no argument, `nix flake check`, and ask yourself what happens if `myapp` is used as a dependency of another cross-compiled package.

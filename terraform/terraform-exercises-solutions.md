@@ -1,52 +1,52 @@
-# Solutions — Exercices Terraform
+# Solutions — Terraform Exercises
 
-## Exercice 1 — Variables et validation
+## Exercise 1 — Variables and validation
 
 ```hcl
 variable "bucket_name" {
   type        = string
-  description = "Nom du bucket S3"
+  description = "S3 bucket name"
 
   validation {
     condition     = startswith(var.bucket_name, "enalean-")
-    error_message = "Le nom du bucket doit commencer par 'enalean-'."
+    error_message = "The bucket name must start with 'enalean-'."
   }
 
   validation {
     condition     = length(var.bucket_name) >= 10 && length(var.bucket_name) <= 40
-    error_message = "Le nom doit faire entre 10 et 40 caractères."
+    error_message = "The name must be between 10 and 40 characters long."
   }
 }
 
 variable "environment" {
   type        = string
-  description = "Environnement cible"
+  description = "Target environment"
 
   validation {
     condition     = contains(["dev", "staging", "prod"], var.environment)
-    error_message = "L'environnement doit être 'dev', 'staging' ou 'prod'."
+    error_message = "The environment must be 'dev', 'staging' or 'prod'."
   }
 }
 
 variable "retention_days" {
   type        = number
-  description = "Durée de rétention des objets en jours"
+  description = "Object retention period in days"
   default     = 30
 
   validation {
     condition     = var.retention_days >= 1 && var.retention_days <= 365
-    error_message = "La rétention doit être entre 1 et 365 jours."
+    error_message = "Retention must be between 1 and 365 days."
   }
 }
 ```
 
-**Points clés :**
-- Plusieurs blocs `validation` sont possibles sur une même variable — préférer des messages d'erreur distincts par règle plutôt qu'une condition composée illisible.
-- `startswith()` est disponible depuis Terraform 1.3. Avant : `substr(var.bucket_name, 0, 8) == "enalean-"`.
+**Key points:**
+- Several `validation` blocks are allowed on the same variable — prefer distinct error messages per rule over one unreadable compound condition.
+- `startswith()` is available since Terraform 1.3. Before that: `substr(var.bucket_name, 0, 8) == "enalean-"`.
 
 ---
 
-## Exercice 2 — Locals et expressions conditionnelles
+## Exercise 2 — Locals and conditional expressions
 
 ```hcl
 variable "environment" {
@@ -70,13 +70,13 @@ locals {
 }
 ```
 
-**Points clés :**
-- La lookup via `map[key]` est plus lisible qu'une chaîne de ternaires imbriqués. Elle plantera au plan si `environment` n'est pas dans la map — ce qui est souhaitable si la variable n'est pas validée en amont.
-- Alternative avec `lookup()` si une valeur par défaut est nécessaire : `lookup(local._types, var.environment, "t3.medium")`.
+**Key points:**
+- A `map[key]` lookup is more readable than a chain of nested ternaries. It will fail at plan time if `environment` is not in the map — which is desirable when the variable isn't validated upstream.
+- Alternative with `lookup()` when a default value is needed: `lookup(local._types, var.environment, "t3.medium")`.
 
 ---
 
-## Exercice 3 — for_each sur une map
+## Exercise 3 — for_each over a map
 
 ```hcl
 variable "users" {
@@ -105,13 +105,13 @@ output "user_arns" {
 }
 ```
 
-**Points clés :**
-- `for_each` sur une map utilise `each.key` / `each.value` — l'adresse de la ressource dans le state sera `aws_iam_user.this["alice"]` plutôt qu'un index numérique. Ajouter un user ne recréera pas les autres (contrairement à `count`).
-- La dépendance entre `aws_iam_user_policy_attachment` et `aws_iam_user` est implicite via `aws_iam_user.this[each.key].name` — pas besoin de `depends_on`.
+**Key points:**
+- `for_each` over a map uses `each.key` / `each.value` — the resource address in state will be `aws_iam_user.this["alice"]` rather than a numeric index. Adding a user won't recreate the others (unlike `count`).
+- The dependency between `aws_iam_user_policy_attachment` and `aws_iam_user` is implicit through `aws_iam_user.this[each.key].name` — no `depends_on` needed.
 
 ---
 
-## Exercice 4 — Module et dynamic blocks
+## Exercise 4 — Module and dynamic blocks
 
 **`modules/security_group/variables.tf`**
 ```hcl
@@ -194,22 +194,22 @@ output "security_group_arn" {
 }
 ```
 
-**Points clés :**
-- La logique de fallback egress est dans `locals`, pas dans la ressource — plus testable et lisible.
-- L'itérateur par défaut d'un `dynamic` block porte le nom du block (`ingress`, `egress`). On peut le renommer avec `iterator = rule` si plusieurs dynamic blocks imbriqués risquent de collisionner.
+**Key points:**
+- The egress fallback logic lives in `locals`, not in the resource — more testable and more readable.
+- A `dynamic` block's default iterator is named after the block (`ingress`, `egress`). It can be renamed with `iterator = rule` when nested dynamic blocks risk colliding.
 
 ---
 
-## Exercice 5 — Import, moved et refactoring
+## Exercise 5 — Import, moved and refactoring
 
-### Partie A — Import
+### Part A — Import
 
-**Commande CLI (Terraform < 1.5 ou fallback) :**
+**CLI command (Terraform < 1.5, or as a fallback):**
 ```bash
 terraform import aws_instance.web i-0abc123def456
 ```
 
-**Bloc HCL (Terraform ≥ 1.5) :**
+**HCL block (Terraform ≥ 1.5):**
 ```hcl
 import {
   to = aws_instance.web
@@ -217,11 +217,11 @@ import {
 }
 ```
 
-L'avantage du bloc HCL : l'import est versionné dans le code, visible en `plan`, et peut être couplé à un `terraform plan -generate-config-out=generated.tf` pour générer la configuration de la ressource automatiquement.
+The advantage of the HCL block: the import is versioned in code, visible in `plan`, and can be paired with `terraform plan -generate-config-out=generated.tf` to generate the resource configuration automatically.
 
 ---
 
-### Partie B — Moved block
+### Part B — Moved block
 
 ```hcl
 moved {
@@ -230,21 +230,21 @@ moved {
 }
 ```
 
-Après application, supprimer le bloc `moved` (il n'est utile que le temps d'un plan/apply).
+Once applied, remove the `moved` block (it's only useful for the duration of one plan/apply).
 
 ---
 
-### Partie C — `moved` block vs `terraform state mv`
+### Part C — `moved` block vs `terraform state mv`
 
 | | `moved` block | `terraform state mv` |
 |---|---|---|
-| Versionné | Oui, dans le code | Non, opération manuelle |
-| Visible en `plan` | Oui | Non |
-| Collaboratif | Oui — tous ceux qui font `apply` l'appliquent | Non — state modifié localement ou via CI |
-| Rollback | Supprimer le bloc et ré-appliquer | `terraform state mv` inverse |
-| Disponibilité | Terraform ≥ 1.1 | Toutes versions |
+| Versioned | Yes, in code | No, manual operation |
+| Visible in `plan` | Yes | No |
+| Collaborative | Yes — everyone who runs `apply` applies it | No — state modified locally or via CI |
+| Rollback | Remove the block and re-apply | Reverse `terraform state mv` |
+| Availability | Terraform ≥ 1.1 | All versions |
 
-**Quand préférer `terraform state mv` :**
-- Migration urgente sans passer par un cycle plan/apply complet (ex: incident).
+**When to prefer `terraform state mv`:**
+- Urgent migration without going through a full plan/apply cycle (e.g. during an incident).
 - Terraform < 1.1.
-- Besoin de déplacer des ressources entre **workspaces ou states différents** — `moved` ne supporte pas le cross-state.
+- Moving resources between **different workspaces or states** — `moved` doesn't support cross-state moves.

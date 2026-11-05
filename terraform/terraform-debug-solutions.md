@@ -1,204 +1,204 @@
-# Solutions — Environnements à debugger
+# Solutions — Environments to debug
 
 ---
 
-## Scénario 1 — Stack réseau VPC
+## Scenario 1 — VPC network stack
 
-4 bugs au total. Tous bloquent `terraform plan`.
+4 bugs in total. All of them block `terraform plan`.
 
 ---
 
-### Bug 1 — `for_each` sur une `list(string)`
+### Bug 1 — `for_each` over a `list(string)`
 
-**Fichier :** `main.tf` — `aws_subnet.public`
+**File:** `main.tf` — `aws_subnet.public`
 
 ```hcl
-# Cassé
+# Broken
 resource "aws_subnet" "public" {
-  for_each = var.availability_zones   # list(string) → erreur
+  for_each = var.availability_zones   # list(string) → error
   ...
 }
 
-# Corrigé — option A : toset() à l'usage
+# Fixed — option A: toset() at the call site
 resource "aws_subnet" "public" {
   for_each = toset(var.availability_zones)
   ...
 }
 
-# Corrigé — option B : changer le type de la variable (préférable)
+# Fixed — option B: change the variable type (preferable)
 variable "availability_zones" {
   type    = set(string)
   default = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
 }
 ```
 
-`for_each` exige un `set` ou une `map`. Une `list` est refusée car l'ordre n'est pas une clé d'identité stable dans le state. `toset()` déduplique aussi implicitement.
+`for_each` requires a `set` or a `map`. A `list` is rejected because ordering is not a stable identity key in state. `toset()` also deduplicates implicitly.
 
 ---
 
-### Bug 2 — Mauvaise référence à l'Internet Gateway
+### Bug 2 — Wrong reference to the Internet Gateway
 
-**Fichier :** `main.tf` — `aws_route.internet`
+**File:** `main.tf` — `aws_route.internet`
 
 ```hcl
-# Cassé
-gateway_id = aws_internet_gateway.main.id   # "main" n'existe pas
+# Broken
+gateway_id = aws_internet_gateway.main.id   # "main" doesn't exist
 
-# Corrigé
-gateway_id = aws_internet_gateway.gw.id     # la ressource s'appelle "gw"
+# Fixed
+gateway_id = aws_internet_gateway.gw.id     # the resource is named "gw"
 ```
 
-Erreur détectée au plan : `Reference to undeclared resource`. À surveiller particulièrement lors de renommages de ressources — le state ne suit pas automatiquement.
+Caught at plan time: `Reference to undeclared resource`. Watch for this especially when renaming resources — state doesn't follow automatically.
 
 ---
 
-### Bug 3 — Référence scalaire dans un contexte `for_each`
+### Bug 3 — Scalar reference in a `for_each` context
 
-**Fichier :** `main.tf` — `aws_route_table_association.public`
+**File:** `main.tf` — `aws_route_table_association.public`
 
 ```hcl
-# Cassé
+# Broken
 resource "aws_route_table_association" "public" {
   for_each = aws_subnet.public
 
-  subnet_id = aws_subnet.public.id   # référence scalaire → erreur en contexte for_each
+  subnet_id = aws_subnet.public.id   # scalar reference → error in a for_each context
   ...
 }
 
-# Corrigé
+# Fixed
 resource "aws_route_table_association" "public" {
   for_each = aws_subnet.public
 
-  subnet_id = each.value.id   # each.value est l'objet aws_subnet courant
+  subnet_id = each.value.id   # each.value is the current aws_subnet object
   ...
 }
 ```
 
-Quand une ressource est créée avec `for_each`, elle n'a plus d'attributs directs — `aws_subnet.public.id` est invalide. Il faut passer par `each.value` dans l'itération ou `aws_subnet.public["key"].id` depuis l'extérieur.
+When a resource is created with `for_each`, it no longer has direct attributes — `aws_subnet.public.id` is invalid. You must go through `each.value` inside the iteration, or `aws_subnet.public["key"].id` from outside.
 
 ---
 
-### Bug 4 — Attribut `cidr_block` au lieu de `cidr_blocks`
+### Bug 4 — `cidr_block` attribute instead of `cidr_blocks`
 
-**Fichier :** `main.tf` — `aws_security_group.bastion`
+**File:** `main.tf` — `aws_security_group.bastion`
 
 ```hcl
-# Cassé
+# Broken
 ingress {
   from_port  = 22
   to_port    = 22
   protocol   = "tcp"
-  cidr_block = var.allowed_ssh_cidrs   # attribut inexistant sur ingress inline
+  cidr_block = var.allowed_ssh_cidrs   # no such attribute on an inline ingress
 }
 
-# Corrigé
+# Fixed
 ingress {
   from_port   = 22
   to_port     = 22
   protocol    = "tcp"
-  cidr_blocks = var.allowed_ssh_cidrs   # pluriel, accepte list(string)
+  cidr_blocks = var.allowed_ssh_cidrs   # plural, accepts list(string)
 }
 ```
 
-`cidr_block` (singulier) est l'attribut de `aws_vpc` et `aws_subnet`. Sur les règles ingress/egress, c'est `cidr_blocks` (pluriel, `list(string)`). Erreur classique à cause de l'incohérence de nommage dans le provider AWS.
+`cidr_block` (singular) is the attribute on `aws_vpc` and `aws_subnet`. On ingress/egress rules it's `cidr_blocks` (plural, `list(string)`). A classic mistake caused by the naming inconsistency in the AWS provider.
 
 ---
 
-## Scénario 2 — Stack ECS Fargate + Secrets Manager
+## Scenario 2 — ECS Fargate + Secrets Manager stack
 
-5 bugs : 3 bloquants ou silencieusement incorrects, 1 qui fera planter l'app au runtime, 1 de sécurité.
+5 bugs: 3 blocking or silently incorrect, 1 that breaks the app at runtime, 1 security issue.
 
 ---
 
-### Bug 1 — Mauvaise référence au log group dans l'IAM policy
+### Bug 1 — Wrong log group reference in the IAM policy
 
-**Fichier :** `iam.tf` — `data.aws_iam_policy_document.ecs_task`
+**File:** `iam.tf` — `data.aws_iam_policy_document.ecs_task`
 
 ```hcl
-# Cassé
+# Broken
 resources = ["${aws_cloudwatch_log_group.ecs.arn}:*"]
 #                                          ^^^
-# La ressource s'appelle "app_logs", pas "ecs"
+# The resource is named "app_logs", not "ecs"
 
-# Corrigé
+# Fixed
 resources = ["${aws_cloudwatch_log_group.app_logs.arn}:*"]
 ```
 
-Erreur détectée au plan : `Reference to undeclared resource`. Même cause que le bug 2 du scénario 1 — renommage non répercuté.
+Caught at plan time: `Reference to undeclared resource`. Same root cause as bug 2 in scenario 1 — a rename that wasn't propagated.
 
 ---
 
-### Bug 2 — IAM trop permissif (bug de sécurité)
+### Bug 2 — Overly permissive IAM (security bug)
 
-**Fichier :** `iam.tf` — `data.aws_iam_policy_document.ecs_task`
+**File:** `iam.tf` — `data.aws_iam_policy_document.ecs_task`
 
 ```hcl
-# Cassé — accès à tous les secrets du compte
+# Broken — access to every secret in the account
 resources = ["*"]
 
-# Corrigé — limité au secret de l'app
+# Fixed — scoped to the app's secret
 resources = [aws_secretsmanager_secret.db.arn]
 ```
 
-Le `apply` passe, l'app fonctionne, mais le task role peut lire **tous les secrets du compte AWS**. En cas de compromission du container, c'est une escalade latérale triviale. Principe du moindre privilège : l'ARN exact du secret suffit.
+`apply` succeeds and the app works, but the task role can read **every secret in the AWS account**. If the container is compromised, lateral escalation is trivial. Least privilege: the exact secret ARN is enough.
 
 ---
 
-### Bug 3 — `valueFrom` pointe sur la valeur du secret, pas sur son ARN
+### Bug 3 — `valueFrom` points at the secret value, not its ARN
 
-**Fichier :** `ecs.tf` — `aws_ecs_task_definition.app`, bloc `secrets`
+**File:** `ecs.tf` — `aws_ecs_task_definition.app`, `secrets` block
 
 ```hcl
-# Cassé — injecte la valeur brute du secret (string Terraform) comme ARN
+# Broken — injects the raw secret value (a Terraform string) as an ARN
 secrets = [{
   name      = "DB_PASSWORD"
   valueFrom = aws_secretsmanager_secret_version.db.secret_string
 }]
 
-# Corrigé — valueFrom attend un ARN Secrets Manager ou SSM Parameter Store
+# Fixed — valueFrom expects a Secrets Manager or SSM Parameter Store ARN
 secrets = [{
   name      = "DB_PASSWORD"
   valueFrom = aws_secretsmanager_secret.db.arn
 }]
 ```
 
-`valueFrom` dans ECS est un ARN, pas une valeur. ECS appelle lui-même Secrets Manager au démarrage du container pour récupérer le secret. Avec la valeur brute, ECS va tenter de le traiter comme un ARN invalide → le container ne démarre pas. Le `apply` passe parce que Terraform ne valide pas le contenu du JSON de `container_definitions`.
+`valueFrom` in ECS is an ARN, not a value. ECS itself calls Secrets Manager at container startup to fetch the secret. With the raw value, ECS will try to treat it as an invalid ARN → the container never starts. `apply` succeeds because Terraform doesn't validate the contents of the `container_definitions` JSON.
 
 ---
 
-### Bug 4 — `launch_type = "EC2"` sur un service Fargate
+### Bug 4 — `launch_type = "EC2"` on a Fargate service
 
-**Fichier :** `ecs.tf` — `aws_ecs_service.app`
+**File:** `ecs.tf` — `aws_ecs_service.app`
 
 ```hcl
-# Cassé
+# Broken
 launch_type = "EC2"
 
-# Corrigé
+# Fixed
 launch_type = "FARGATE"
 ```
 
-La task definition a `requires_compatibilities = ["FARGATE"]` et `network_mode = "awsvpc"`. Avec `launch_type = "EC2"`, AWS refusera le déploiement à l'apply (pas au plan) : les instances EC2 du cluster n'existent pas, et `awsvpc` sans Fargate nécessite une configuration supplémentaire. Erreur visible uniquement après le `apply`.
+The task definition has `requires_compatibilities = ["FARGATE"]` and `network_mode = "awsvpc"`. With `launch_type = "EC2"`, AWS will reject the deployment at apply time (not at plan): the cluster has no EC2 instances, and `awsvpc` without Fargate needs extra configuration. The error only shows up after `apply`.
 
 ---
 
-### Bug 5 — Output d'une valeur sensible sans `sensitive = true`
+### Bug 5 — Outputting a sensitive value without `sensitive = true`
 
-**Fichier :** `outputs.tf`
+**File:** `outputs.tf`
 
 ```hcl
-# Cassé — affiche le mot de passe en clair dans le terminal et les logs CI
+# Broken — prints the password in cleartext in the terminal and CI logs
 output "db_secret_value" {
   value = aws_secretsmanager_secret_version.db.secret_string
 }
 
-# Corrigé
+# Fixed
 output "db_secret_value" {
   value     = aws_secretsmanager_secret_version.db.secret_string
   sensitive = true
 }
 ```
 
-Sans `sensitive = true`, Terraform affiche la valeur en clair dans `terraform output` et dans les logs d'un pipeline CI. La variable `db_password` est marquée `sensitive`, mais ça ne se propage pas automatiquement à l'output. Depuis Terraform 0.15, un warning est émis, mais pas une erreur — ça passe.
+Without `sensitive = true`, Terraform prints the value in cleartext in `terraform output` and in CI pipeline logs. The `db_password` variable is marked `sensitive`, but that doesn't propagate automatically to the output. Since Terraform 0.15 a warning is emitted, but not an error — it goes through.
 
-> **Bonus :** l'output s'appelle `db_secret_value` mais expose `secret_string` (le mot de passe en clair) plutôt que `secret_arn`. C'est probablement ce que l'appelant devrait recevoir pour appeler Secrets Manager lui-même.
+> **Bonus:** the output is named `db_secret_value` but exposes `secret_string` (the cleartext password) rather than `secret_arn`. The ARN is probably what the caller should receive so it can call Secrets Manager itself.

@@ -1,6 +1,6 @@
-# Solutions — Exercices Nix
+# Solutions — Nix Exercises
 
-## Exercice 1 — Attribute sets, types et interpolation
+## Exercise 1 — Attribute sets, types and interpolation
 
 ```nix
 let
@@ -17,13 +17,13 @@ in
 }
 ```
 
-**Points clés :**
-- L'interpolation `"${...}"` n'accepte que des chaînes (ou des valeurs qui se coercent en chaîne). `port` est un entier : il faut `toString port`, sinon erreur `cannot coerce an integer to a string`.
-- `inherit name version port;` évite de répéter `name = name;` — Nix va chercher ces noms dans le scope englobant (ici le `let`).
+**Key points:**
+- Interpolation `"${...}"` only accepts strings (or values that coerce to a string). `port` is an integer, so `toString port` is required — otherwise: `cannot coerce an integer to a string`.
+- `inherit name version port;` avoids repeating `name = name;` — Nix looks these names up in the enclosing scope (here, the `let`).
 
 ---
 
-## Exercice 2 — Fonctions et attrsets avec valeurs par défaut
+## Exercise 2 — Functions and attrsets with default values
 
 ```nix
 let
@@ -38,13 +38,13 @@ in
 }
 ```
 
-**Points clés :**
-- Le pattern `{ name, shell ? default, isAdmin ? default }:` est un argument attrset avec valeurs par défaut — très courant dans les modules NixOS et les derivations. Les champs non listés dans le pattern feront planter l'appel, sauf si on ajoute `, ...` à la fin du pattern.
-- Nix est un langage paresseux et à typage dynamique : rien n'empêche d'appeler `mkUser { name = "carol"; }` sans erreur, `shell` et `isAdmin` prendront leurs défauts.
+**Key points:**
+- The pattern `{ name, shell ? default, isAdmin ? default }:` is an attrset argument with default values — very common in NixOS modules and derivations. Fields not listed in the pattern make the call fail, unless you add `, ...` at the end of the pattern.
+- Nix is lazy and dynamically typed: nothing prevents calling `mkUser { name = "carol"; }` — `shell` and `isAdmin` simply take their defaults.
 
 ---
 
-## Exercice 3 — map, filter, foldl' et listToAttrs
+## Exercise 3 — map, filter, foldl' and listToAttrs
 
 ```nix
 let
@@ -64,14 +64,14 @@ in
 }
 ```
 
-**Points clés :**
-- `builtins.listToAttrs` attend une liste de `{ name = ...; value = ...; }` — c'est le pont standard entre une liste et un attrset, l'équivalent Nix d'un `for_each` Terraform qui transforme une collection en map indexée.
-- `foldl'` (avec l'apostrophe) est la version **stricte** de `foldl` — elle évalue l'accumulateur à chaque étape au lieu de construire un thunk paresseux. Sur une grande liste, `foldl` non strict peut faire exploser la pile ; `foldl'` est le choix par défaut recommandé.
-- Alternative plus idiomatique pour `count` : `builtins.length filtered`. `foldl'` est ici pour l'exercice, mais dans du code réel, préfère la fonction la plus directe.
+**Key points:**
+- `builtins.listToAttrs` expects a list of `{ name = ...; value = ...; }` — it's the standard bridge from a list to an attrset, the Nix equivalent of a Terraform `for_each` turning a collection into an indexed map.
+- `foldl'` (with the apostrophe) is the **strict** version of `foldl` — it evaluates the accumulator at each step instead of building a lazy thunk. On a large list, non-strict `foldl` can blow the stack; `foldl'` is the recommended default.
+- A more idiomatic alternative for `count`: `builtins.length filtered`. `foldl'` is here for the sake of the exercise, but in real code prefer the most direct function.
 
 ---
 
-## Exercice 4 — Derivation et `.override`
+## Exercise 4 — Derivation and `.override`
 
 ```nix
 { pkgs ? import <nixpkgs> {} }:
@@ -102,16 +102,16 @@ in
 }
 ```
 
-**Points clés :**
-- `dontUnpack = true` est nécessaire car `src = ./.;` n'est pas une archive à décompresser ici — sans lui, `mkDerivation` cherche une phase `unpackPhase` par défaut et échoue faute d'archive reconnue.
-- `.override` ne fonctionne que sur les derivations construites via une fonction dont les arguments sont capturés (le cas standard de `mkDerivation rec { ... }` appelé depuis une fonction paramétrée dans nixpkgs). Ici, pour que `.override` s'applique proprement sur `GREETING_NAME`, `greeter` doit être le résultat direct de `stdenv.mkDerivation { ... }` — ce qui est le cas.
-- Piège classique : le `${GREETING_NAME}` dans le heredoc bash est interprété par **Nix** (interpolation de chaîne), pas par bash au runtime — la valeur est donc figée à la construction du store path, pas lue dynamiquement depuis l'environnement du script exécuté.
+**Key points:**
+- `dontUnpack = true` is required because `src = ./.;` isn't an archive to extract here — without it, `mkDerivation` runs its default `unpackPhase` and fails for lack of a recognized archive.
+- `.override` only works on derivations built through a function whose arguments are captured (the standard case of a parameterized function in nixpkgs calling `mkDerivation rec { ... }`). Here, for `.override` to apply cleanly to `GREETING_NAME`, `greeter` must be the direct result of `stdenv.mkDerivation { ... }` — which it is.
+- Classic trap: the `${GREETING_NAME}` inside the bash heredoc is interpreted by **Nix** (string interpolation), not by bash at runtime — so the value is frozen when the store path is built, not read dynamically from the running script's environment.
 
 ---
 
-## Exercice 5 — Overlay et module NixOS avec options
+## Exercise 5 — Overlay and NixOS module with options
 
-### Partie A — Overlay
+### Part A — Overlay
 
 ```nix
 final: prev: {
@@ -124,11 +124,11 @@ final: prev: {
 }
 ```
 
-**Points clés :**
-- `overrideAttrs` reçoit l'ancien attrset de la derivation (`old`) et retourne les champs à fusionner par-dessus. On préserve `old.postPatch` existant avec `(old.postPatch or "")` plutôt que de l'écraser.
-- Dans un overlay, `prev.hello` désigne le `hello` **avant** cet overlay (le nixpkgs de base ou le résultat des overlays précédents) ; `final.hello` désignerait le `hello` **après** tous les overlays (le point fixe final). Utiliser `final.hello.overrideAttrs` ici créerait une **récursion infinie** puisque `final.hello` dépend de la définition qu'on est en train d'écrire.
+**Key points:**
+- `overrideAttrs` receives the derivation's previous attrset (`old`) and returns the fields to merge on top. Preserve any existing `old.postPatch` with `(old.postPatch or "")` rather than overwriting it.
+- In an overlay, `prev.hello` refers to `hello` **before** this overlay (base nixpkgs, or the result of previous overlays); `final.hello` would refer to `hello` **after** all overlays (the final fixed point). Using `final.hello.overrideAttrs` here would cause **infinite recursion**, since `final.hello` depends on the very definition being written.
 
-### Partie B — Module NixOS
+### Part B — NixOS module
 
 ```nix
 { config, lib, pkgs, ... }:
@@ -140,12 +140,12 @@ let
 in
 {
   options.services.myapp = {
-    enable = mkEnableOption "le service myapp";
+    enable = mkEnableOption "the myapp service";
 
     port = mkOption {
       type = types.port;
       default = 8080;
-      description = "Port d'écoute de myapp.";
+      description = "Port myapp listens on.";
     };
   };
 
@@ -164,20 +164,20 @@ in
 }
 ```
 
-**Points clés :**
-- Tout doit être sous `mkIf cfg.enable` dans `config` — sinon le service et la règle firewall existeraient même quand `services.myapp.enable = false`, contrairement à l'intention du module.
-- `types.port` valide que la valeur est un entier entre 0 et 65535 — préférable à `types.int` qui accepterait n'importe quel entier, y compris négatif.
-- `networking.firewall.allowedTCPPorts` est une **liste** fusionnable entre modules (plusieurs modules peuvent chacun y ajouter des ports sans se marcher dessus) — c'est le système de type `types.listOf` de NixOS qui gère cette fusion automatiquement.
+**Key points:**
+- Everything must sit under `mkIf cfg.enable` inside `config` — otherwise the service and the firewall rule would exist even when `services.myapp.enable = false`, against the module's intent.
+- `types.port` validates that the value is an integer between 0 and 65535 — preferable to `types.int`, which would accept any integer, including negative ones.
+- `networking.firewall.allowedTCPPorts` is a **list** that merges across modules (several modules can each add ports without stepping on each other) — NixOS's `types.listOf` handles that merge automatically.
 
-### Partie C — Overlay vs module NixOS
+### Part C — Overlay vs NixOS module
 
-| | Overlay | Module NixOS |
+| | Overlay | NixOS module |
 |---|---|---|
-| Portée | Modifie/ajoute des **packages** dans l'attrset `pkgs` | Modifie la **configuration système** (services, réseau, utilisateurs...) |
-| Mécanisme | Fonction `final: prev: { ... }` appliquée au point fixe de nixpkgs | Attrset `{ options, config, imports }` fusionné par le module system |
-| S'utilise dans | `nixpkgs.overlays` (NixOS) ou `import nixpkgs { overlays = [...]; }` | `environment.etc`, `imports` de `configuration.nix` |
-| Cas d'usage typique | Patcher un package, changer sa version, ajouter un package custom à `pkgs` | Activer/configurer un service, exposer des options réutilisables et validées par type |
+| Scope | Modifies/adds **packages** in the `pkgs` attrset | Modifies the **system configuration** (services, network, users…) |
+| Mechanism | A `final: prev: { ... }` function applied to the nixpkgs fixed point | An `{ options, config, imports }` attrset merged by the module system |
+| Used in | `nixpkgs.overlays` (NixOS) or `import nixpkgs { overlays = [...]; }` | `environment.etc`, `imports` in `configuration.nix` |
+| Typical use case | Patch a package, change its version, add a custom package to `pkgs` | Enable/configure a service, expose reusable, type-validated options |
 
-**Quand préférer l'un ou l'autre :**
-- Overlay : dès que tu touches à **comment un package est construit** (patch, version, dépendances de build).
-- Module : dès que tu touches à **comment le système est configuré** (quels services tournent, quels ports sont ouverts, quels utilisateurs existent). Un module peut très bien référencer un package venant d'un overlay (`pkgs.myapp` dans l'exemple ci-dessus).
+**When to prefer one over the other:**
+- Overlay: whenever you touch **how a package is built** (patch, version, build dependencies).
+- Module: whenever you touch **how the system is configured** (which services run, which ports are open, which users exist). A module can perfectly well reference a package coming from an overlay (`pkgs.myapp` in the example above).

@@ -1,14 +1,14 @@
-# Terraform — Environnements à debugger
+# Terraform — Environments to debug
 
-Chaque scénario est un environnement **fonctionnel en apparence** mais qui contient des bugs à trouver.
-Certains feront planter `terraform plan`, d'autres `terraform apply`, d'autres passeront mais produiront un résultat incorrect ou non sécurisé.
+Each scenario is an environment that **looks functional** but contains bugs to find.
+Some will break `terraform plan`, others `terraform apply`, others will pass but produce an incorrect or insecure result.
 
 ---
 
-## Scénario 1 — Stack réseau VPC (AWS)
+## Scenario 1 — VPC network stack (AWS)
 
-L'équipe a écrit cette stack pour provisionner un VPC multi-AZ avec des subnets publics et un bastion.
-Le code ne se lance pas. Trouve et corrige tous les bugs.
+The team wrote this stack to provision a multi-AZ VPC with public subnets and a bastion.
+The code doesn't run. Find and fix all the bugs.
 
 ### `variables.tf`
 
@@ -121,10 +121,10 @@ resource "aws_security_group" "bastion" {
 
 ---
 
-## Scénario 2 — Stack applicative ECS Fargate + Secrets Manager
+## Scenario 2 — ECS Fargate application stack + Secrets Manager
 
-L'équipe déploie une app conteneurisée sur ECS Fargate avec un secret de BDD injecté via Secrets Manager.
-Le `terraform apply` passe, mais l'app ne démarre pas — et il y a un problème de sécurité non détecté.
+The team is deploying a containerized app on ECS Fargate with a database secret injected through Secrets Manager.
+`terraform apply` succeeds, but the app doesn't start — and there is an undetected security issue.
 
 ### `variables.tf`
 

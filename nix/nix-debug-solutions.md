@@ -1,143 +1,143 @@
-# Solutions — Environnements Nix à debugger
+# Solutions — Nix environments to debug
 
 ---
 
-## Scénario 1 — Configuration NixOS d'un serveur bastion
+## Scenario 1 — NixOS configuration of a bastion server
 
-5 bugs : 3 bloquent l'évaluation, 1 est silencieux (le paquet conditionnel n'est jamais installé correctement), 2 sont des problèmes de sécurité.
+5 bugs: 3 break evaluation, 1 is silent (the conditional package is never installed properly), 2 are security issues.
 
 ---
 
-### Bug 1 — Option firewall mal orthographiée
+### Bug 1 — Misspelled firewall option
 
-**Fichier :** `configuration.nix` — `networking.firewall`
+**File:** `configuration.nix` — `networking.firewall`
 
 ```nix
-# Cassé
+# Broken
 networking.firewall.allowedTcpPorts = [ 22 80 443 ];
 
-# Corrigé
+# Fixed
 networking.firewall.allowedTCPPorts = [ 22 80 443 ];
 ```
 
-Le module system NixOS valide strictement les chemins d'options : `allowedTcpPorts` n'existe pas (l'option officielle est `allowedTCPPorts`, avec TCP en majuscules). Erreur à l'évaluation : `The option 'networking.firewall.allowedTcpPorts' does not exist`. Contrairement à un attrset Nix classique, une clé inconnue dans un module n'est pas silencieusement ignorée.
+The NixOS module system validates option paths strictly: `allowedTcpPorts` doesn't exist (the official option is `allowedTCPPorts`, with TCP uppercased). Evaluation error: `The option 'networking.firewall.allowedTcpPorts' does not exist`. Unlike a plain Nix attrset, an unknown key in a module is not silently ignored.
 
 ---
 
-### Bug 2 — Référence à une variable non définie dans un attrset non-`rec`
+### Bug 2 — Reference to an undefined variable in a non-`rec` attrset
 
-**Fichier :** `configuration.nix` — `services.myapp.settings`
+**File:** `configuration.nix` — `services.myapp.settings`
 
 ```nix
-# Cassé
+# Broken
 services.myapp.settings = {
   port = 8080;
-  url  = "http://localhost:${port}";   # "port" n'existe pas dans ce scope
+  url  = "http://localhost:${port}";   # "port" doesn't exist in this scope
 };
 
-# Corrigé — option A : référencer le chemin complet
+# Fixed — option A: reference the full value
 services.myapp.settings = {
   port = 8080;
   url  = "http://localhost:${toString 8080}";
 };
 
-# Corrigé — option B : utiliser rec pour permettre l'auto-référence
+# Fixed — option B: use rec to allow self-reference
 services.myapp.settings = rec {
   port = 8080;
   url  = "http://localhost:${toString port}";
 };
 ```
 
-Un attrset `{ ... }` classique n'est **pas récursif** : ses membres ne peuvent pas se référencer entre eux. Il faut soit `rec { ... }`, soit référencer une valeur déjà définie ailleurs dans le scope (un `let`, par exemple). Ici en plus, `port` est un entier — il faut `toString` pour l'interpoler dans une chaîne, sinon `cannot coerce an integer to a string`.
+A plain `{ ... }` attrset is **not recursive**: its members can't reference each other. You need either `rec { ... }`, or a value already defined elsewhere in scope (in a `let`, for instance). On top of that, `port` is an integer — `toString` is required to interpolate it into a string, otherwise `cannot coerce an integer to a string`.
 
 ---
 
-### Bug 3 — `mkIf` utilisé comme élément de liste
+### Bug 3 — `mkIf` used as a list element
 
-**Fichier :** `configuration.nix` — `environment.systemPackages`
+**File:** `configuration.nix` — `environment.systemPackages`
 
 ```nix
-# Cassé
+# Broken
 environment.systemPackages = with pkgs; [
   vim
   htop
   (mkIf cfg.enableExtras curl)
 ];
 
-# Corrigé
+# Fixed
 environment.systemPackages = with pkgs; [
   vim
   htop
 ] ++ lib.optional cfg.enableExtras curl;
 ```
 
-`mkIf` retourne un attrset spécial (`{ _type = "if"; condition = ...; content = ...; }`) destiné à être fusionné **au niveau d'une valeur d'option entière** par le module system (ex: `environment.systemPackages = mkIf cond [ ... ];`). Placé comme simple élément au milieu d'une liste, ce marqueur n'est jamais résolu par la fusion de listes standard : soit ça casse le typage de la liste (`types.listOf package` attend des packages, pas des attrsets `_type = "if"`), soit — selon le contexte — l'élément reste tel quel et n'est jamais installé. `lib.optional cond value` est l'outil correct pour ajouter conditionnellement un élément à l'intérieur d'une liste.
+`mkIf` returns a special attrset (`{ _type = "if"; condition = ...; content = ...; }`) meant to be merged by the module system **at the level of a whole option value** (e.g. `environment.systemPackages = mkIf cond [ ... ];`). Dropped in as a plain element in the middle of a list, that marker is never resolved by standard list merging: either it breaks the list's typing (`types.listOf package` expects packages, not `_type = "if"` attrsets), or — depending on context — the element stays as-is and is never installed. `lib.optional cond value` is the right tool to conditionally add an element inside a list.
 
 ---
 
-### Bug 4 — SSH root autorisé et authentification par mot de passe active (sécurité)
+### Bug 4 — Root SSH login allowed and password authentication enabled (security)
 
-**Fichier :** `configuration.nix` — `services.openssh.settings`
+**File:** `configuration.nix` — `services.openssh.settings`
 
 ```nix
-# Cassé
+# Broken
 services.openssh.settings = {
   PermitRootLogin = "yes";
   PasswordAuthentication = true;
 };
 
-# Corrigé
+# Fixed
 services.openssh.settings = {
   PermitRootLogin = "no";
   PasswordAuthentication = false;
 };
 ```
 
-L'évaluation passe, le service démarre, mais le bastion accepte les connexions root et les mots de passe — exactement ce qu'un serveur exposé (bastion !) ne doit pas faire. Un utilisateur `deploy` avec clé SSH est déjà défini plus haut : c'est la voie d'accès à privilégier. `PermitRootLogin = "prohibit-password"` est un compromis acceptable si l'accès root direct par clé est réellement nécessaire.
+Evaluation passes and the service starts, but the bastion accepts root logins and passwords — exactly what an exposed server (a bastion!) must not do. A `deploy` user with an SSH key is already defined above: that's the access path to favour. `PermitRootLogin = "prohibit-password"` is an acceptable compromise if direct root access by key is genuinely needed.
 
 ---
 
-### Bug 5 — Secret en clair dans le Nix store (sécurité)
+### Bug 5 — Cleartext secret in the Nix store (security)
 
-**Fichier :** `configuration.nix` — `environment.etc`
+**File:** `configuration.nix` — `environment.etc`
 
 ```nix
-# Cassé — lisible par tout utilisateur local
+# Broken — readable by any local user
 environment.etc."myapp/db-password".text = "hunter2";
 
-# Corrigé — utiliser un mécanisme de secret runtime (agenix, sops-nix, ou credentials systemd)
+# Fixed — use a runtime secret mechanism (agenix, sops-nix, or systemd credentials)
 sops.secrets."myapp/db-password" = {
   owner = "myapp";
 };
-# ou, plus simple sans dépendance externe :
+# or, simpler and without an external dependency:
 systemd.services.myapp.serviceConfig.LoadCredential =
   [ "db-password:/run/secrets/myapp-db-password" ];
 ```
 
-Tout ce qui passe par `environment.etc.*.text` (ou plus généralement tout ce qui est référencé dans une derivation ou une configuration NixOS) finit dans `/nix/store`, qui est **lisible par tous les utilisateurs du système** par conception (nécessaire pour le partage de dépendances entre utilisateurs). Un secret en clair ici est visible par n'importe quel compte local, et reste en plus dans l'historique Git si ce fichier est versionné. Il faut un mécanisme dédié (agenix, sops-nix, `LoadCredential` systemd avec un fichier hors du store) qui garde le secret hors de `/nix/store`.
+Anything going through `environment.etc.*.text` (and more generally anything referenced in a derivation or a NixOS configuration) ends up in `/nix/store`, which is **world-readable by design** (necessary for sharing dependencies between users). A cleartext secret there is visible to any local account, and also stays in the Git history if the file is versioned. Use a dedicated mechanism (agenix, sops-nix, systemd `LoadCredential` pointing at a file outside the store) that keeps the secret out of `/nix/store`.
 
 ---
 
-## Scénario 2 — Flake build + devShell
+## Scenario 2 — Flake build + devShell
 
-5 bugs : 1 bloque l'évaluation, 2 sont silencieux (passent le build mais cassent l'usage réel), 1 est un problème de sécurité, 1 casse l'usage sans argument de `nix build`.
+5 bugs: 1 breaks evaluation, 2 are silent (the build passes but real usage breaks), 1 is a security issue, 1 breaks `nix build` with no argument.
 
 ---
 
-### Bug 1 — `flake-utils` utilisé sans être déclaré en input
+### Bug 1 — `flake-utils` used without being declared as an input
 
-**Fichier :** `flake.nix` — `outputs`
+**File:** `flake.nix` — `outputs`
 
 ```nix
-# Cassé
+# Broken
 inputs = {
   nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
 };
 
 outputs = { self, nixpkgs, ... }:
-  flake-utils.lib.eachDefaultSystem (system: ...);   # flake-utils n'existe nulle part
+  flake-utils.lib.eachDefaultSystem (system: ...);   # flake-utils exists nowhere
 
-# Corrigé
+# Fixed
 inputs = {
   nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
   flake-utils.url = "github:numtide/flake-utils";
@@ -147,81 +147,81 @@ outputs = { self, nixpkgs, flake-utils, ... }:
   flake-utils.lib.eachDefaultSystem (system: ...);
 ```
 
-Erreur à l'évaluation : `undefined variable 'flake-utils'`. Toute dépendance externe utilisée dans `outputs` doit être déclarée dans `inputs` **et** reprise dans les arguments de la fonction `outputs`, sinon elle n'est simplement pas dans le scope.
+Evaluation error: `undefined variable 'flake-utils'`. Any external dependency used in `outputs` must be declared in `inputs` **and** taken as an argument of the `outputs` function — otherwise it simply isn't in scope.
 
 ---
 
-### Bug 2 — `nativeBuildInputs` et `buildInputs` inversés
+### Bug 2 — `nativeBuildInputs` and `buildInputs` swapped
 
-**Fichier :** `flake.nix` — derivation `myapp`
+**File:** `flake.nix` — `myapp` derivation
 
 ```nix
-# Cassé
-nativeBuildInputs = [ pkgs.openssl ];   # openssl est une lib à linker, pas un outil de build
-buildInputs = [ pkgs.pkg-config ];      # pkg-config est un outil de build, pas une lib à linker
+# Broken
+nativeBuildInputs = [ pkgs.openssl ];   # openssl is a library to link against, not a build tool
+buildInputs = [ pkgs.pkg-config ];      # pkg-config is a build tool, not a library to link against
 
-# Corrigé
+# Fixed
 nativeBuildInputs = [ pkgs.pkg-config ];
 buildInputs = [ pkgs.openssl ];
 ```
 
-`nativeBuildInputs` contient les outils qui tournent **pendant le build, sur la machine hôte** (compilateurs, `pkg-config`, `makeWrapper`...). `buildInputs` contient les dépendances **destinées à la machine cible** (bibliothèques à linker, comme `openssl`). En build natif (hôte = cible), les deux catégories finissent dans le même `PATH`/`NIX_LDFLAGS` et l'erreur ne se voit pas — le build passe. Dès qu'on cross-compile, ou qu'un autre package dépend de `myapp` en s'attendant à un déploiement propre des dépendances, la confusion casse la build ou embarque des dépendances inutiles dans la closure runtime.
+`nativeBuildInputs` holds the tools that run **during the build, on the host machine** (compilers, `pkg-config`, `makeWrapper`…). `buildInputs` holds the dependencies **meant for the target machine** (libraries to link against, like `openssl`). In a native build (host = target), both categories end up in the same `PATH`/`NIX_LDFLAGS` and the mistake is invisible — the build passes. As soon as you cross-compile, or another package depends on `myapp` expecting a clean dependency split, the confusion breaks the build or drags useless dependencies into the runtime closure.
 
 ---
 
-### Bug 3 — Mot de passe en clair dans le build (sécurité)
+### Bug 3 — Cleartext password in the build (security)
 
-**Fichier :** `flake.nix` — `buildPhase`
+**File:** `flake.nix` — `buildPhase`
 
 ```nix
-# Cassé
+# Broken
 buildPhase = ''
   export DB_PASSWORD="hunter2"
   make build
 '';
 
-# Corrigé — passer le secret hors du store, au runtime, pas au build
+# Fixed — pass the secret outside the store, at runtime, not at build time
 buildPhase = ''
   make build
 '';
-# le mot de passe est injecté au démarrage du service (systemd LoadCredential, docker secret, etc.),
-# jamais au moment de la construction du package
+# the password is injected when the service starts (systemd LoadCredential, docker secret, etc.),
+# never while the package is being built
 ```
 
-`hunter2` apparaît en clair dans les logs de build (visibles par quiconque relance `nix build` ou consulte `nix log`), et potentiellement dans le binaire produit s'il est compilé en dur. Un secret n'a rien à faire dans une `buildPhase` : la derivation résultante est un chemin `/nix/store/...` public, lisible par tous les utilisateurs du système.
+`hunter2` shows up in cleartext in the build logs (visible to anyone re-running `nix build` or reading `nix log`), and potentially in the produced binary if it's compiled in. A secret has no business in a `buildPhase`: the resulting derivation is a public `/nix/store/...` path, readable by every user on the system.
 
 ---
 
-### Bug 4 — Pas de `packages.default`
+### Bug 4 — No `packages.default`
 
-**Fichier :** `flake.nix` — `outputs`
+**File:** `flake.nix` — `outputs`
 
 ```nix
-# Cassé — nix build (sans argument) échoue : pas de packages.<system>.default
+# Broken — nix build (with no argument) fails: no packages.<system>.default
 packages.myapp = myapp;
 
-# Corrigé
+# Fixed
 packages.myapp = myapp;
 packages.default = myapp;
 ```
 
-`nix build .#myapp` fonctionne, mais `nix build` seul (l'usage attendu par la plupart des utilisateurs et par beaucoup de CI) cherche `packages.<system>.default` et échoue avec `flake output attribute 'packages.x86_64-linux.default' is missing`. Toujours exposer un `default` quand il n'y a qu'un seul package pertinent.
+`nix build .#myapp` works, but plain `nix build` (what most users and plenty of CI setups expect) looks for `packages.<system>.default` and fails with `flake output attribute 'packages.x86_64-linux.default' is missing`. Always expose a `default` when there's only one relevant package.
 
 ---
 
-### Bug 5 — Overlay hors schéma + récursion infinie
+### Bug 5 — Out-of-schema overlay + infinite recursion
 
-**Fichier :** `flake.nix` — dernier bloc
+**File:** `flake.nix` — last block
 
 ```nix
-# Cassé
+# Broken
 nixpkgs-overlay = final: prev: {
   myapp = final.myapp.overrideAttrs (old: {
     version = "1.0.1";
   });
 };
 
-# Corrigé
+# Fixed
 outputs = { self, nixpkgs, flake-utils, ... }: {
   overlays.default = final: prev: {
     myapp = prev.myapp.overrideAttrs (old: {
@@ -231,8 +231,8 @@ outputs = { self, nixpkgs, flake-utils, ... }: {
 } // flake-utils.lib.eachDefaultSystem (system: ... );
 ```
 
-Deux problèmes cumulés :
-1. **Attribut hors schéma :** `nixpkgs-overlay` n'est pas un nom reconnu par les outils `nix` — un overlay de flake doit vivre sous `overlays.<nom>` (généralement `overlays.default`) pour être découvert par `nix flake show` ou consommé par un autre flake.
-2. **Récursion infinie :** dans un overlay `final: prev: { myapp = final.myapp...`, `final.myapp` désigne le `myapp` **après** application de cet overlay — donc sa propre définition. Évaluer `final.myapp` pour définir `final.myapp` boucle indéfiniment (`infinite recursion encountered`). Il faut partir de `prev.myapp`, qui désigne le `myapp` **avant** cet overlay.
+Two problems at once:
+1. **Out-of-schema attribute:** `nixpkgs-overlay` isn't a name the `nix` tooling recognizes — a flake overlay must live under `overlays.<name>` (usually `overlays.default`) to be discovered by `nix flake show` or consumed by another flake.
+2. **Infinite recursion:** in an overlay `final: prev: { myapp = final.myapp...`, `final.myapp` refers to `myapp` **after** this overlay is applied — i.e. its own definition. Evaluating `final.myapp` in order to define `final.myapp` loops forever (`infinite recursion encountered`). You must start from `prev.myapp`, which refers to `myapp` **before** this overlay.
 
-> **Bonus :** même corrigé, cet overlay redéfinit `myapp` en repartant de `prev.myapp` — un `hello`-like package de nixpkgs qui n'a probablement rien à voir avec le `myapp` local construit plus haut dans `outputs`. Si l'intention est de patcher **le `myapp` du dépôt**, il n'y a pas besoin d'overlay du tout : il suffit de modifier directement la derivation locale.
+> **Bonus:** even once fixed, this overlay redefines `myapp` starting from `prev.myapp` — some nixpkgs package that most likely has nothing to do with the local `myapp` built above in `outputs`. If the intent is to patch **the repo's `myapp`**, no overlay is needed at all: just modify the local derivation directly.
